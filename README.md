@@ -101,3 +101,30 @@ out = simulate(plant, pid, step_setpoint(1.0), t_end=5.0)
 | **Overshoot** | Percentage by which peak response exceeds setpoint: $\max(0, \frac{y_{\max} - r}{r} \times 100\%)$. |
 | **Settling Time** | The time after which the response remains within a $\pm 2\%$ band around its final steady value. |
 | **Steady-State Error** | Final offset between target setpoint and settled value: $e_{ss} = r - y_{\text{final}}$. |
+
+---
+
+## Technical Write-Up: Approach, What Worked, What Didn't & Next Steps
+
+### 1. Approach
+* **First-Principles Modeling**: Developed the physical plants ($m \ddot{x} + c \dot{x} + k x = F$ and $G(s) = \frac{1}{(s+1)^3}$) and simulation engine strictly using Python and NumPy, avoiding third-party control toolboxes. Continuous physics is integrated using 4th-order Runge-Kutta (RK4) with fine sub-stepping ($dt = T_s / 5$).
+* **Discrete Zero-Order Hold Architecture**: The PID controller executes at discrete intervals ($T_s = 10\text{ ms}$ for 100 Hz loops) holding output constant between updates, accurately replicating real-world embedded firmware.
+* **Systematic Evaluation**: Progressed from analytical baseline derivations (P-only steady-state error $x_{ss} = \frac{K_p}{K_p+k}$) to component sweeps, side-by-side trade-off matrices, and real-world constraint mitigation.
+
+### 2. What Worked
+* **Back-Calculation Anti-Windup**: Eliminates integrator buildup during $\pm 30\text{ N}$ actuator saturation. It dropped overshoot from $13.8\%$ to $0.00\%$ and accelerated settling time by $2.26\times$ (from $1.83\text{ s}$ down to $0.81\text{ s}$).
+* **Derivative-on-Measurement**: Differentiating the plant output rather than the error signal completely abolished the destructive $1000\text{ N}$ derivative kick spike during setpoint steps without compromising rise time.
+* **First-Order Derivative Filtering**: Passing the derivative through a discrete low-pass filter ($\tau = 0.02\text{ s}$) suppressed actuator force jitter by $70\%$ (from $0.946\text{ N}$ down to $0.285\text{ N}$ standard deviation) under $\pm 1\text{ mm}$ sensor noise.
+* **Refined Ziegler-Nichols Tuning**: Slashed classical Z-N overshoot on $G(s) = 1/(s+1)^3$ from $55.1\%$ down to $4.8\%$, settling $2.3\times$ faster ($6.1\text{ s}$ vs $14.1\text{ s}$).
+
+### 3. What Didn't (and Challenges Overcome)
+* **Naive Textbook PID Formulation**: An unaugmented textbook PID failed when physical constraints were introduced, causing severe motor chatter under sensor noise and massive overshoot when saturated.
+* **Classical Ziegler-Nichols Aggressiveness**: Standard Z-N tuning formulas target a quarter-decay ratio ($25\%$ decay per cycle), which produced unacceptable overshoot ($>50\%$) for precision robotics. Parameter refinement (reducing $K_p$, increasing $T_i$, and tuning $T_d$) was necessary to achieve well-damped response.
+* **Sampling Rate Limits**: Discovered that when controller update intervals exceed $T_s > 200\text{ ms}$, phase lag induces instability (critical threshold $T_{\text{crit}} \approx 255\text{ ms}$). For slow loops, scaling gains down by $50\%$ was required to restore stable margins.
+
+### 4. What I Would Explore Next With More Time
+* **Feedforward Control**: Implement gravity/friction feedforward ($u_{ff} = m \ddot{r} + c \dot{r} + k r$) combined with trapezoidal or S-curve trajectory profiling to eliminate reliance on error-driven feedback alone.
+* **State Estimation (Kalman Filter)**: Replace the first-order derivative low-pass filter with a Linear Quadratic Estimator (Kalman Filter) to fuse noisy position measurements and estimate true velocity states.
+* **Gain Scheduling & Adaptive Control**: Dynamically adapt $K_p, K_i, K_d$ as operating points change to handle non-linear dynamics (e.g., non-linear spring deflection, aerodynamic drag).
+* **Model Predictive Control (MPC)**: Formulate multi-state constrained optimization to systematically handle state and input boundaries across coupled robotic joints.
+
